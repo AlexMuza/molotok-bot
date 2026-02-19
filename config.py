@@ -32,13 +32,24 @@ TELEGRAM_BOT_TOKEN = _get_required(
 )
 
 # ID чата администратора — сюда пересылаются заказы (обязательно для пересылки)
-ADMIN_CHAT_ID = _get_required(
+_admin_id_raw = _get_required(
     "ADMIN_CHAT_ID",
     "Узнать ID: напишите боту @userinfobot в Telegram, скопируйте 'Id'.",
 )
+ADMIN_CHAT_ID = int(_admin_id_raw.strip().replace("\r", "").replace("\n", ""))
 
-# Папка для логов и БД (можно задать через env, по умолчанию — data в корне проекта)
+# Несколько админов: в .env можно задать ADMIN_CHAT_IDS=id1,id2 — тогда заказы уйдут всем
+_admin_ids_raw = os.environ.get("ADMIN_CHAT_IDS", "").strip()
+if _admin_ids_raw:
+    ADMIN_CHAT_IDS = [
+        int(x.strip()) for x in _admin_ids_raw.split(",") if x.strip()
+    ]
+else:
+    ADMIN_CHAT_IDS = [ADMIN_CHAT_ID]
+
+# Папка для логов и БД
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR / "data")))
 ORDERS_LOG_FILE = DATA_DIR / "orders.log"
 ORDERS_DB_FILE = DATA_DIR / "orders.db"
+BOT_LOG_FILE = DATA_DIR / "bot.log"

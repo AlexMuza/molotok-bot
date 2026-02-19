@@ -1,11 +1,21 @@
 """
 Обработка текстовых сообщений как заказов:
-1) сохраняем заказ в файл и в БД,
-2) отправляем подтверждение пользователю,
-3) пересылаем заказ администратору в Telegram.
+1) rate limit — не чаще раз в 60 сек от одного пользователя;
+2) сохраняем заказ в файл и в БД;
+3) отправляем подтверждение пользователю;
+4) пересылаем заказ всем администраторам.
 """
+import time
+import logging
+
 import config
 from storage.orders import save_order
+
+logger = logging.getLogger(__name__)
+
+# Ограничение: один заказ от одного user_id не чаще чем раз в ORDER_COOLDOWN_SEC секунд
+ORDER_COOLDOWN_SEC = 60
+_last_order_time: dict[int, float] = {}
 
 
 def register(bot):
@@ -19,8 +29,21 @@ def register(bot):
         chat_id = message.chat.id
         order_text = message.text
 
-        # 1) Логирование: файл + SQLite
-        save_order(order_text, user_id=user_id, username=username, chat_id=chat_id)
+        # Rate limit
+        now = time.time()
+        if user_id in _last_order_time:
+            elapsed = now - _last_order_time[user_id]
+            if elapsed < ORDER_COOLDOWN_SEC:
+                bot.send_message(
+                    message.chat.id,
+                    "⏳ Подождите минуту перед следующим заказом.",
+                    parse_mode="html",
+                )
+                return
+        _last_order_time[user_id] = now
+
+        # 1) Логирование: файл + SQLite (получаем id заказа для админа и /done)
+        order_id = save_order(order_text, user_id=user_id, username=username, chat_id=chat_id)
 
         # 2) Подтверждение клиенту
         order_response = f"""
@@ -35,20 +58,17 @@ def register(bot):
         """
         bot.send_message(message.chat.id, order_response, parse_mode="html")
 
-        # 3) Пересылка администратору
-        try:
-            admin_text = (
-                "📦 <b>Новый заказ</b>\n\n"
-                f"👤 user_id: <code>{user_id}</code>\n"
-                f"📛 username: @{username or '—'}\n"
-                f"💬 Чат: <code>{chat_id}</code>\n\n"
-                f"Текст заказа:\n{order_text}"
-            )
-            bot.send_message(
-                config.ADMIN_CHAT_ID,
-                admin_text,
-                parse_mode="html",
-            )
-        except Exception as e:
-            # Логируем ошибку, но пользователю уже отправили подтверждение
-            print(f"Не удалось отправить заказ админу: {e}")
+        # 3) Пересылка всем администраторам (с номером заказа для /done)
+        admin_text = (
+            f"📦 <b>Новый заказ №{order_id}</b>\n\n"
+            f"👤 user_id: <code>{user_id}</code>\n"
+            f"📛 username: @{username or '—'}\n"
+            f"💬 Чат: <code>{chat_id}</code>\n\n"
+            f"Текст заказа:\n{order_text}\n\n"
+            f"Чтобы уведомить клиента: /done {order_id}"
+        )
+        for admin_id in config.ADMIN_CHAT_IDS:
+            try:
+                bot.send_message(admin_id, admin_text, parse_mode="html")
+            except Exception as e:
+                logger.exception("Не удалось отправить заказ админу %s: %s", admin_id, e)

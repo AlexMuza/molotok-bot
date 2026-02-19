@@ -2,11 +2,12 @@
 Регистрация всех обработчиков бота.
 main.py вызывает register_all(bot), и каждый подмодуль вешает свои хендлеры.
 """
-from . import callbacks, orders, start
+from . import admin, callbacks, orders, start
 
 
 def register_all(bot):
-    """Подключает команду /start, кнопки (каталог, контакты, заказ) и приём заказов (текст)."""
+    """Подключает /start, кнопки, заказы, админ-команды."""
     start.register(bot)
     callbacks.register(bot)
     orders.register(bot)
+    admin.register(bot)

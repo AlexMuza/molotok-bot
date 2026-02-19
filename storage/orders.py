@@ -25,8 +25,8 @@ def _log_to_file(order_text: str, user_id: int, username: str | None, chat_id: i
         f.write(line)
 
 
-def _log_to_db(order_text: str, user_id: int, username: str | None, chat_id: int):
-    """Сохраняет заказ в SQLite: таблица orders."""
+def _log_to_db(order_text: str, user_id: int, username: str | None, chat_id: int) -> int:
+    """Сохраняет заказ в SQLite; возвращает id созданного заказа."""
     _ensure_data_dir()
     conn = sqlite3.connect(config.ORDERS_DB_FILE)
     try:
@@ -42,7 +42,7 @@ def _log_to_db(order_text: str, user_id: int, username: str | None, chat_id: int
             )
             """
         )
-        conn.execute(
+        cur = conn.execute(
             """
             INSERT INTO orders (created_at, user_id, chat_id, username, order_text)
             VALUES (?, ?, ?, ?, ?)
@@ -56,14 +56,70 @@ def _log_to_db(order_text: str, user_id: int, username: str | None, chat_id: int
             ),
         )
         conn.commit()
+        return cur.lastrowid or 0
     finally:
         conn.close()
 
 
-def save_order(order_text: str, user_id: int, username: str | None, chat_id: int) -> None:
+def save_order(order_text: str, user_id: int, username: str | None, chat_id: int) -> int:
     """
     Сохраняет заказ и в файл orders.log, и в БД orders.db.
-    Вызывается из обработчика сообщений при каждом новом заказе.
+    Возвращает id заказа в БД (для уведомления админа и /done).
     """
     _log_to_file(order_text, user_id, username, chat_id)
-    _log_to_db(order_text, user_id, username, chat_id)
+    return _log_to_db(order_text, user_id, username, chat_id)
+
+
+def get_stats(days: int = 7) -> tuple[int, int]:
+    """Возвращает (заказов за сегодня, заказов за последние days дней)."""
+    import sqlite3
+    from datetime import datetime, timedelta
+
+    if not config.ORDERS_DB_FILE.exists():
+        return 0, 0
+    conn = sqlite3.connect(config.ORDERS_DB_FILE)
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        since = (datetime.now() - timedelta(days=days)).isoformat()
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM orders WHERE date(created_at) = date(?)",
+            (today,),
+        )
+        today_count = cur.fetchone()[0]
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM orders WHERE created_at >= ?",
+            (since,),
+        )
+        period_count = cur.fetchone()[0]
+        return today_count, period_count
+    finally:
+        conn.close()
+
+
+def get_chat_id_by_order_id(order_id: int) -> int | None:
+    """Возвращает chat_id клиента по id заказа, или None."""
+    import sqlite3
+
+    if not config.ORDERS_DB_FILE.exists():
+        return None
+    conn = sqlite3.connect(config.ORDERS_DB_FILE)
+    try:
+        cur = conn.execute("SELECT chat_id FROM orders WHERE id = ?", (order_id,))
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def get_all_chat_ids() -> list[int]:
+    """Возвращает список уникальных chat_id, которые когда-либо делали заказ (для рассылки)."""
+    import sqlite3
+
+    if not config.ORDERS_DB_FILE.exists():
+        return []
+    conn = sqlite3.connect(config.ORDERS_DB_FILE)
+    try:
+        cur = conn.execute("SELECT DISTINCT chat_id FROM orders")
+        return [row[0] for row in cur.fetchall()]
+    finally:
+        conn.close()
